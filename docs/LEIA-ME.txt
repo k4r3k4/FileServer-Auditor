@@ -1,0 +1,186 @@
+FileServerAuditor v4.0 - Auditoria de acesso em file server (Windows/AD)
+=======================================================================
+
+O QUE FAZ
+---------
+Audita permissoes de acesso em compartilhamentos de arquivos Windows em dois modos:
+
+  1) Usuario -> pastas
+     Informe um usuario do dominio (ex.: EMPRESA\joao.silva) e a raiz do
+     compartilhamento. A ferramenta percorre a arvore e calcula o acesso
+     efetivo daquele usuario em cada pasta (e arquivo, se habilitado).
+
+  2) Pasta -> usuarios
+     Informe a raiz. A ferramenta lista todas as ACEs (Allow/Deny) de cada
+     pasta. Opcionalmente, informe um "usuario foco" para calcular tambem o
+     acesso efetivo dele em cada pasta.
+
+O resultado pode ser filtrado pela arvore de pastas e exportado em CSV, HTML ou
+JSON, alem de poder ser comparado entre execucoes (diff de relatorios).
+
+REQUISITOS
+----------
+- Windows 10/11 ou Windows Server com .NET Framework 4.8.
+- Conta com permissao de leitura das ACLs NTFS dos caminhos auditados.
+- Para ler a ACL do COMPARTILHAMENTO (share) e necessario ter permissao
+  administrativa no servidor (a API NetShareGetInfo nivel 502 exige isso).
+  Sem essa permissao, o NTFS continua sendo auditado e o share aparece como
+  "Nao verificado" (nao ha conclusao enganosa).
+- Opcional: credenciais de dominio. A ferramenta usa LogonUser com
+  LOGON32_LOGON_NEW_CREDENTIALS e impersonation na thread de varredura.
+
+COMO USAR
+---------
+1. Raiz: informe \\SERVIDOR\Compartilhamento ou uma unidade mapeada (X:\Pasta).
+   Prefira UNC: a ACL do share so pode ser consultada quando o servidor e o
+   share sao identificaveis no caminho.
+2. Escolha o modo e preencha a identidade.
+   Em maquina ingressada no dominio, o dominio e detectado automaticamente
+   (AD/DNS/NetBIOS) e o campo Usuario ja vem preenchido com
+   DOMINIO\seu_usuario; basta alterar para auditar outra conta.
+   Em maquina fora do dominio, informe DOMINIO\usuario manualmente.
+   - "Usar credenciais de dominio": solicita usuario e senha para LogonUser
+     (a senha nao e gravada em disco).
+   - "Lembrar credenciais nesta sessao (criptografado com DPAPI)": armazena
+     usuario e senha criptografados com a Data Protection API do Windows
+     (vinculada ao usuario da maquina) durante a sessao, evitando texto claro
+     exposto nos campos do objeto. Nao e gravado em disco.
+3. Opcoes:
+   - "Somente com acesso": no modo usuario, mostra apenas pastas com acesso.
+   - "Expandir grupos": no modo pasta, lista membros dos grupos das ACEs.
+     Atencao: isso e associacao de grupo, nao prova de token efetivo.
+   - "Incluir arquivos": le a ACL de cada arquivo (pode ficar lento).
+   - "Exportar CSV", "Exportar HTML" e "Exportar JSON": salvam o resultado
+     da auditoria no local escolhido no dialogo "Salvar".
+4. Clique em "Auditar". O botao "Cancelar" interrompe a varredura.
+5. Ao terminar, a grade ja mostra TODAS as linhas de detalhe. Clique em um no
+   da arvore para filtrar as linhas daquela pasta; o no "Todos os resultados"
+   volta ao conjunto completo.
+6. Clique no cabecalho de uma coluna para ordenar (Caminho, Principal, etc.).
+7. Duplo clique em uma linha copia o caminho. Menu de contexto permite abrir
+   no Explorer.
+8. Exporte em CSV (Excel), HTML (relatorio colorido) ou JSON (automacao).
+   As observacoes de "acesso sem pasta pai" tambem vao para os relatorios.
+9. Para comparar duas execucoes, clique em "Comparar auditorias" e escolha o
+   export base e o novo (CSV ou JSON). Se as identidades forem diferentes, o
+   programa avisa e pede confirmacao antes de comparar. O resultado abre em
+   uma janela e pode ser salvo em .txt.
+
+LEITURA DO RESULTADO
+--------------------
+Modo usuario:
+  - Uma linha "Efetivo" por pasta/arquivo, com as colunas NTFS, Share e
+    Efetivo (mascaras hexadecimais), alem de Ler/Gravar/Excluir/Full.
+
+Modo pasta:
+  - Uma linha por ACE (Allow/Deny), com principal, SID, direitos, heranca,
+    flags e protecao da DACL.
+  - Se houver usuario foco, uma linha "Efetivo" adicional por pasta.
+  - DACL NULL aparece como linha critica (acesso total no modelo Windows).
+  - DACL vazia aparece como "Sem ACEs" (acesso negado).
+
+Colunas principais:
+  - Share: mascara da ACL do share ou "Nao verificado".
+  - NTFS: mascara efetiva da DACL NTFS para a identidade.
+  - Efetivo: NTFS & Share quando o share foi verificado; caso contrario,
+    apenas NTFS, com observacao de que nao foi confirmado.
+  - Cores: ver a secao "LEGENDA DE CORES E ACESSO SEM PASTA PAI".
+    Resumo: FullControl/critico em vermelho; erro em amarelo; acesso
+    efetivo de leitura/escrita em verde; acesso sem pasta pai em laranja. 
+
+LEGENDA DE CORES E ACESSO SEM PASTA PAI
+---------------------------------------
+Na arvore de pastas (menu de navegacao):
+  - Verde: o usuario tem acesso a pasta.
+  - Vermelho: FullControl (ou DACL critica).
+  - Laranja (negrito) "[acesso s/ pasta pai]": subpasta acessivel mesmo
+    sem acesso a pasta pai (o acesso foi confirmado na subpasta).
+  - Roxo (negrito) "[contem subpasta acessivel]": pasta sem acesso que
+    contem, em qualquer nivel abaixo dela, subpasta acessivel ao usuario.
+    TODOS os ancestrais sem acesso, ate a raiz auditada, sao marcados em
+    roxo, para a condicao ficar evidente desde a raiz da arvore.
+Na grade de detalhes as linhas recebem o fundo correspondente (verde-claro,
+vermelho-claro, trigo/laranja, lilas) e a coluna Observacoes registra a
+condicao. O selo aparece com o caminho completo ao passar o mouse.
+
+Observacao: a deteccao "sem acesso a pasta pai" exige uma avaliacao de
+acesso efetivo (modo usuario, ou modo pasta com usuario foco). Com a
+opcao "Somente com acesso", as pastas sem acesso nao geram linha na
+grade, mas continuam na arvore como ancestrais e recebem o destaque roxo;
+a subpasta acessivel recebe o laranja. A cadeia para em um ancestral
+acessivel, em uma linha de erro ou em um caminho nao auditado.
+
+MODELO DE AVALIACAO
+-------------------
+- Allow e Deny sao aplicados; Deny prevalece (deny vence).
+- ACEs InheritOnly nao se aplicam ao proprio objeto (valem para filhos).
+- ACEs de objeto (ObjectAce) nao sao avaliadas; a linha registra a limitacao.
+- DACL NULL = acesso total; DACL vazia = nenhum acesso.
+- Grupos considerados para o usuario:
+    * SID do usuario;
+    * Everyone, Authenticated Users, Network, This Organization;
+    * grupos do token da sessao atual (quando o usuario e o logado);
+    * tokenGroups (busca Base no objeto do usuario), primaryGroupID e
+      sIDHistory do AD (quando em dominio);
+    * grupos locais do servidor (NetUserGetLocalGroups, inclusive indiretos);
+    * grupos locais citados nas ACEs (ex.: BUILTIN\Users), resolvidos por
+      consulta de membros no servidor.
+- A avaliacao usa um motor proprio de DACL, validado por autoteste.
+- Deteccao de dominio: usa Domain.GetCurrentDomain() (AD), depois o sufixo DNS
+  da maquina e, por fim, Environment.UserDomainName. Em maquina fora do
+  dominio, a UI indica isso no log e mantem os campos editaveis.
+
+LIMITACOES CONHECIDAS
+---------------------
+- Shares administrativos (C$, ADMIN$, IPC$) retornam descritor nulo: a ACL do
+  share nao e verificada.
+- DFS, links simbolicos e pontos de juncao nao sao tratados como shares.
+- Pontos de reanalise sao ignorados na varredura para evitar loops.
+- ACL de share remota depende de permissao administrativa.
+- Avisos sao limitados a 20.000 itens (evita consumo excessivo de memoria em
+  arvores muito grandes); o excedente e resumido em uma unica linha.
+- Grupos do AD grandes sao lidos por faixas (`member;range=...`), sem o limite
+  de ~1.500 membros; a expansao total ainda e limitada a 200.000 linhas por
+  varredura (aviso e emitido ao truncar).
+- A varredura e feita em streaming (a memoria cresce conforme as linhas de
+  resultado, nao conforme a arvore enumerada); a barra fica indeterminada
+  durante a leitura, com contagem de itens no status.
+- O proprietario do objeto recebe os direitos implicitos READ_CONTROL e
+  WRITE_DAC (Ler/Alterar permissoes); isso nao implica leitura de conteudo.
+
+SEGURANCA
+---------
+- A ferramenta NAO altera ACLs, permissoes ou conteudo: somente leitura.
+- Nunca grava arquivos no caminho/compartilhamento auditado. As exportacoes
+  (CSV/HTML/JSON) so sao gravadas no local escolhido no dialogo "Salvar".
+- A senha informada fica apenas em memoria e e descartada ao fim da varredura;
+  nao e gravada em disco nem em log.
+- Log de falhas em %LOCALAPPDATA%\FileServerAuditor (nunca no share auditado).
+- O CSV neutraliza formulas (=, +, -, @) para evitar execucao ao abrir no Excel.
+- Nao ha envio de dados para a Internet.
+
+ESTRUTURA DO REPOSITORIO
+------------------------
+  README.md                  Visao geral e inicio rapido
+  docs/LEIA-ME.txt           Este manual
+  CHANGELOG.md               Historico de versoes
+  SECURITY.md                Politica de seguranca
+  DISCLAIMER.md              Aviso legal
+  LICENSE                    Termos de uso (MIT)
+
+  NOTA: o aplicativo e distribuido como executavel portatil na aba Releases.
+
+SOLUCAO DE PROBLEMAS
+--------------------
+- "Nao foi possivel resolver o usuario ...": verifique o formato
+  DOMINIO\usuario, a conectividade com o controlador de dominio e, se
+  necessario, marque "Usar credenciais de dominio".
+- "Falha ao autenticar com as credenciais informadas": confira dominio,
+  usuario e senha; a conta precisa poder autenticar no servidor.
+- "ACL do share nao consultada": execute com conta administrativa no servidor
+  ou aceite a auditoria NTFS com share nao verificado.
+- "Falha ao ler ACL de ...": a conta nao tem permissao de leitura da ACL ou o
+  caminho esta indisponivel; a linha e marcada como erro (nao como ausencia).
+- Se o aplicativo nao abrir, veja o log em
+  %LOCALAPPDATA%\FileServerAuditor\FileServerAuditorV4.erro.log
+  (nada e gravado na pasta do aplicativo nem no share auditado).
